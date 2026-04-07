@@ -1,0 +1,101 @@
+[
+  {
+    "id": "e6016eb7-f794-4ac5-a6b3-7999e03fa5ea",
+    "createdAt": "2026-04-05T19:21:00.836Z",
+    "specs": {
+      "year": "2023",
+      "make": "Freightliner",
+      "model": "Cascadia 126",
+      "mileage": "520021",
+      "price": "61995",
+      "financing": "yes",
+      "notes": "DD15 - 450 horsepower \r\nAutomatic 12 speed \r\nAPU Thermoking \r\nDouble bunk\r\nDrivers lounge "
+    },
+    "originalFile": "/var/www/sites/katy-truck-social/app/uploads/939a3075-3a63-4db0-8bb2-a472e1e25aa9.mov",
+    "processedFile": "/var/www/sites/katy-truck-social/app/processed/e6016eb7-f794-4ac5-a6b3-7999e03fa5ea.mp4",
+    "isVideo": true,
+    "captions": {
+      "facebook": "🚛 Just Listed: 2023 Freightliner Cascadia 126\n\nPriced at $61,995 with 520,021 miles. Financing available — ready to work. Come see it at 5349 Hwy Blvd, Katy TX.\n\n📞 Call Eric at (281) 891-0597\n\n#KatyTrucks #TruckForSale #CommercialTruck #TexasTrucks",
+      "instagram": "🔥 2023 Freightliner Cascadia 126 — $61,995 🚛\n520,021 miles. Financing available! Call (281) 891-0597 📞\n\n#KatyTrucks #TruckLife #TruckForSale #HeavyEquipment #Texas #CommercialTruck #PeterbiltNation #Freightliner #TruckDriver",
+      "tiktok": "2023 Freightliner Cascadia 126 for $61,995! 🚛🔥 Financing available — Call (281) 891-0597 #trucksoftiktok #katytrucks #truckforsale #semitruck #texas"
+    },
+    "status": "ready",
+    "postResults": null,
+    "error": null,
+    "popcornFile": "/var/www/sites/katy-truck-social/app/processed/e6016eb7-f794-4ac5-a6b3-7999e03fa5ea_popcorn.mp4"
+  },
+  {
+    "id": "f8f0c5c5-3b1a-40b7-b54b-1f4e8700cf73",
+    "createdAt": "2026-04-02T21:25:44.888Z",
+    "specs": {
+      "year": "2022",
+      "make": "Freightliner M2 crew cab",
+      "model": "289",
+      "mileage": "59000",
+      "price": "89000",
+      "financing": "yes",
+      "notes": "Testing"
+    },
+    "originalFile": "/var/www/sites/katy-truck-social/app/uploads/e175543a-799d-44a5-aea0-95a5017af9e1.mp4",
+    "processedFile": "/var/www/sites/katy-truck-social/app/processed/f8f0c5c5-3b1a-40b7-b54b-1f4e8700cf73.mp4",
+    "isVideo": true,
+    "captions": {
+      "facebook": "🚛 Just Listed: 2022 Freightliner M2 crew cab 289\n\nPriced at $89,000 with 59,000 miles. Financing available — ready to work. Come see it at 5349 Hwy Blvd, Katy TX.\n\n📞 Call Eric at (281) 891-0597\n\n#KatyTrucks #TruckForSale #CommercialTruck #TexasTrucks",
+      "instagram": "🔥 2022 Freightliner M2 crew cab 289 — $89,000 🚛\n59,000 miles. Financing available! Call (281) 891-0597 📞\n\n#KatyTrucks #TruckLife #TruckForSale #HeavyEquipment #Texas #CommercialTruck #PeterbiltNation #Freightliner #TruckDriver",
+      "tiktok": "2022 Freightliner M2 crew cab 289 for $89,000! 🚛🔥 Financing available — Call (281) 891-0597 #trucksoftiktok #katytrucks #truckforsale #semitruck #texas"
+    },
+    "status": "ready",
+    "postResults": null,
+    "error": null,
+    "popcornFile": "/var/www/sites/katy-truck-social/app/processed/f8f0c5c5-3b1a-40b7-b54b-1f4e8700cf73_popcorn.mp4"
+  },
+  {
+    "id": "62ef9ae6-7146-4b70-b430-2825718c30fa",
+    "createdAt": "2026-03-29T23:57:16.758Z",
+    "specs": {
+      "year": "2022",
+      "make": "Peterbilt",
+      "model": "389",
+      "mileage": "",
+      "price": "89500",
+      "financing": "no",
+      "notes": ""
+    },
+    "originalFile": "/var/www/sites/katy-truck-social/app/uploads/d84d21cf-345a-45d5-94bb-c0b983e75ef0.mp4",
+    "processedFile": "/var/www/sites/katy-truck-social/app/processed/62ef9ae6-7146-4b70-b430-2825718c30fa.mp4",
+    "isVideo": true,
+    "captions": {
+      "facebook": "🚛 Just Listed: 2022 Peterbilt 389\n\nPriced at $89,500. ready to work. Come see it at 5349 Hwy Blvd, Katy TX.\n\n📞 Call Eric at (281) 891-0597\n\n#KatyTrucks #TruckForSale #CommercialTruck #TexasTrucks",
+      "instagram": "🔥 2022 Peterbilt 389 — $89,500 🚛\nCall (281) 891-0597 📞\n\n#KatyTrucks #TruckLife #TruckForSale #HeavyEquipment #Texas #CommercialTruck #PeterbiltNation #Freightliner #TruckDriver",
+      "tiktok": "2022 Peterbilt 389 for $89,500! 🚛🔥 Call (281) 891-0597 #trucksoftiktok #katytrucks #truckforsale #semitruck #texas"
+    },
+    "status": "ready",
+    "postResults": null,
+    "error": "overlay_failed"
+  },
+  {
+    "id": "1c9a9993-94e8-4c55-8688-541f8a4e24cd",
+    "createdAt": "2026-03-25T20:28:56.721Z",
+    "specs": {
+      "year": "2020",
+      "make": "Freightliner M2 crew cab",
+      "model": "",
+      "mileage": "120000",
+      "price": "99999",
+      "financing": "no",
+      "notes": "Test"
+    },
+    "originalFile": "/var/www/sites/katy-truck-social/app/uploads/28022460-cf47-4149-940b-3ea3931a86c9.mp4",
+    "processedFile": "/var/www/sites/katy-truck-social/app/processed/1c9a9993-94e8-4c55-8688-541f8a4e24cd.mp4",
+    "isVideo": true,
+    "captions": {
+      "facebook": "🚛 Just Listed: 2020 Freightliner M2 crew cab \n\nPriced at $99,999 with 120,000 miles. ready to work. Come see it at 5349 Hwy Blvd, Katy TX.\n\n📞 Call Eric at (281) 891-0597\n\n#KatyTrucks #TruckForSale #CommercialTruck #TexasTrucks",
+      "instagram": "🔥 2020 Freightliner M2 crew cab  — $99,999 🚛\n120,000 miles. Call (281) 891-0597 📞\n\n#KatyTrucks #TruckLife #TruckForSale #HeavyEquipment #Texas #CommercialTruck #PeterbiltNation #Freightliner #TruckDriver",
+      "tiktok": "2020 Freightliner M2 crew cab  for $99,999! 🚛🔥 Call (281) 891-0597 #trucksoftiktok #katytrucks #truckforsale #semitruck #texas"
+    },
+    "status": "ready",
+    "postResults": null,
+    "error": "overlay_failed",
+    "popcornFile": "/var/www/sites/katy-truck-social/app/processed/1c9a9993-94e8-4c55-8688-541f8a4e24cd_popcorn.mp4"
+  }
+]
