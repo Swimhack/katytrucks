@@ -5,6 +5,7 @@ const express = require('express');
 const multer  = require('multer');
 const path    = require('path');
 const fs      = require('fs');
+const crypto  = require('crypto');
 const { exec } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -23,6 +24,14 @@ const ERIC_EMAIL     = process.env.ERIC_EMAIL || '';
 const DEALER_NAME    = 'Katy Truck & Equipment Sales';
 const DEALER_PHONE   = '(281) 891-0597';
 const BASE_URL       = process.env.BASE_URL || 'https://stricklandtechnology.net/trucks';
+
+// ── Access control ───────────────────────────────────────
+// Admin dashboard + admin API routes require HTTP Basic auth.
+// Client gallery requires the CLIENT_TOKEN query param (?t=...).
+// Individual video URLs use a per-job accessToken minted at upload time.
+const ADMIN_USER   = process.env.ADMIN_USER   || 'admin';
+const ADMIN_PASS   = process.env.ADMIN_PASS   || '';
+const CLIENT_TOKEN = process.env.CLIENT_TOKEN || '';
 
 // Fonts
 const FONT_BOLD   = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
@@ -63,7 +72,84 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/processed', express.static(PROCESSED_DIR));
+
+// ── Admin Basic auth middleware ──────────────────────────
+function adminAuth(req, res, next) {
+  if (!ADMIN_PASS) {
+    // Fail closed in production; fail open only if explicitly no password set AND not on a public host
+    return res.status(503).send('Admin disabled: set ADMIN_PASS in environment.');
+  }
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const [u, p] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+    if (u === ADMIN_USER && p === ADMIN_PASS) return next();
+  }
+  res.set('WWW-Authenticate', 'Basic realm="Truck Autopilot Admin"');
+  return res.status(401).send('Authentication required.');
+}
+
+function isAdmin(req) {
+  if (!ADMIN_PASS) return false;
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme !== 'Basic' || !encoded) return false;
+  const [u, p] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+  return u === ADMIN_USER && p === ADMIN_PASS;
+}
+
+// ── Per-job access token helpers ─────────────────────────
+function mintToken() { return crypto.randomBytes(24).toString('hex'); }
+
+// Backfill: any legacy job without an accessToken gets one now. Returns the
+// token so callers can build URLs without an extra disk read.
+function ensureAccessToken(jobId) {
+  const jobs = loadJobs();
+  const j = jobs.find(x => x.id === jobId);
+  if (!j) return null;
+  if (!j.accessToken) {
+    j.accessToken = mintToken();
+    saveJobs(jobs);
+  }
+  return j.accessToken;
+}
+
+// Build the public URL a client should use to play/download a variant.
+// variant: 'main' (the overlaid mp4), 'popcorn' (the popcorn variant), or 'original'.
+function videoUrl(job, variant = 'main') {
+  const tok = job.accessToken || ensureAccessToken(job.id);
+  if (!tok) return null;
+  return `${BASE_URL}/v/${job.id}/${variant}?t=${tok}`;
+}
+
+// Resolve a variant name to an on-disk file path for a given job.
+function resolveVariantPath(job, variant) {
+  switch (variant) {
+    case 'main':     return job.processedFile || null;
+    case 'popcorn':  return job.popcornFile   || null;
+    case 'original': return job.originalFile  || null;
+    default:         return null;
+  }
+}
+
+// ── Authenticated video delivery ─────────────────────────
+// Streams the requested variant if ?t= matches the job's accessToken OR the
+// caller is authenticated as admin. Replaces the old unauthenticated
+// `app.use('/processed', express.static(...))` mount.
+app.get('/v/:id/:variant', (req, res) => {
+  const jobs = loadJobs();
+  const job  = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).send('Not found');
+
+  const ok = (req.query.t && job.accessToken && req.query.t === job.accessToken) || isAdmin(req);
+  if (!ok) return res.status(403).send('Forbidden');
+
+  const filePath = resolveVariantPath(job, req.params.variant);
+  if (!filePath || !fs.existsSync(filePath)) return res.status(404).send('File not found');
+
+  // Let Express handle Range requests, content-type, etc.
+  return res.sendFile(path.resolve(filePath));
+});
 
 // SMTP via Zoho
 const mailer = nodemailer.createTransport({
@@ -197,9 +283,7 @@ Return ONLY valid JSON with keys: facebook, instagram, tiktok
 
 // ── Notify James by email ─────────────────────────────────
 async function notifyJames(job) {
-  const videoUrl = job.processedFile
-    ? `${BASE_URL}/processed/${path.basename(job.processedFile)}`
-    : null;
+  const videoLink = job.processedFile ? videoUrl(job, 'main') : null;
 
   const html = `
 <div style="font-family:Arial,sans-serif;max-width:620px;color:#111">
@@ -213,7 +297,7 @@ async function notifyJames(job) {
       Miles: <strong>${Number(job.specs.mileage||0).toLocaleString()}</strong> &nbsp;·&nbsp;
       Financing: <strong>${job.specs.financing === 'yes' ? 'Yes' : 'No'}</strong>
     </p>
-    ${videoUrl ? `<p><a href="${videoUrl}" style="background:#dc2626;color:#fff;padding:0.75rem 1.5rem;border-radius:6px;text-decoration:none;font-weight:700;display:inline-block">⬇ Download Processed Video</a></p>` : ''}
+    ${videoLink ? `<p><a href="${videoLink}" style="background:#dc2626;color:#fff;padding:0.75rem 1.5rem;border-radius:6px;text-decoration:none;font-weight:700;display:inline-block">⬇ Download Processed Video</a></p>` : ''}
     <hr style="margin:1.5rem 0;border:none;border-top:1px solid #e5e5e5">
     <h4 style="color:#1877f2;margin:0 0 0.5rem">📘 Facebook</h4>
     <p style="background:#fff;border:1px solid #e5e5e5;padding:1rem;border-radius:6px;white-space:pre-wrap;font-size:0.9rem">${(job.captions?.facebook||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</p>
@@ -238,12 +322,9 @@ async function notifyJames(job) {
 // ── Notify Eric by email (replaces Ayrshare) ─────────────
 async function notifyEric(job) {
   if (!ERIC_EMAIL) return; // No email configured, skip
-  const videoUrl = job.processedFile
-    ? `${BASE_URL}/processed/${path.basename(job.processedFile)}`
-    : null;
-  const popcornUrl = job.popcornFile
-    ? `${BASE_URL}/processed/${path.basename(job.popcornFile)}`
-    : null;
+  const videoLink   = job.processedFile ? videoUrl(job, 'main')    : null;
+  const popcornLink = job.popcornFile   ? videoUrl(job, 'popcorn') : null;
+  const galleryLink = CLIENT_TOKEN      ? `${BASE_URL}/gallery?t=${CLIENT_TOKEN}` : null;
   const truck = `${job.specs.year} ${job.specs.make} ${job.specs.model}`;
 
   const platformSection = (name, icon, color, caption) => `
@@ -260,14 +341,16 @@ async function notifyEric(job) {
   </div>
   <div style="background:#fff;padding:1.5rem;border:1px solid #e0e0e0;border-top:none">
     <p style="margin:0 0 1.25rem;color:#444;font-size:0.95rem">Your branded video is done and your captions are ready. Download the video, then copy each caption and post.</p>
-    ${videoUrl ? `<div style="text-align:center;margin-bottom:1.5rem">
-      <a href="${videoUrl}" style="background:#dc2626;color:#fff;padding:0.875rem 2rem;border-radius:8px;text-decoration:none;font-weight:700;font-size:1rem;display:inline-block">⬇ Download Your Video</a>
+    ${videoLink ? `<div style="text-align:center;margin-bottom:1.5rem">
+      <a href="${videoLink}" style="background:#dc2626;color:#fff;padding:0.875rem 2rem;border-radius:8px;text-decoration:none;font-weight:700;font-size:1rem;display:inline-block">⬇ Download Your Video</a>
+      ${popcornLink ? `<br><a href="${popcornLink}" style="color:#dc2626;font-size:0.85rem;display:inline-block;margin-top:0.6rem">Download popcorn variant</a>` : ''}
     </div>` : ''}
     <hr style="border:none;border-top:1px solid #e0e0e0;margin:0 0 1.5rem">
     ${platformSection('Facebook', '📘', '#1877f2', job.captions?.facebook)}
     ${platformSection('Instagram', '📸', '#e1306c', job.captions?.instagram)}
     ${platformSection('TikTok', '🎵', '#010101', job.captions?.tiktok)}
     <hr style="border:none;border-top:1px solid #e0e0e0;margin:1.5rem 0 1rem">
+    ${galleryLink ? `<p style="text-align:center;margin:0 0 1rem"><a href="${galleryLink}" style="color:#dc2626;font-weight:700;text-decoration:none">🎞 Open your video gallery</a></p>` : ''}
     <p style="color:#888;font-size:0.8rem;margin:0;text-align:center">Questions? Call James at (713) 444-6732</p>
   </div>
 </div>`;
@@ -283,9 +366,8 @@ async function notifyEric(job) {
 // ── Post via Ayrshare ─────────────────────────────────────
 async function postViaAyrshare(job) {
   if (!AYRSHARE_KEY) return null;
-  const videoUrl = job.processedFile
-    ? `${BASE_URL}/processed/${path.basename(job.processedFile)}`
-    : null;
+  // Ayrshare must be able to fetch the media, so the token is embedded in the URL.
+  const videoLink = job.processedFile ? videoUrl(job, 'main') : null;
   const platforms = ['facebook', 'instagram', 'tiktok'];
   const results = {};
   for (const p of platforms) {
@@ -294,7 +376,7 @@ async function postViaAyrshare(job) {
         post: job.captions?.[p] || job.captions?.facebook || '',
         platforms: [p]
       };
-      if (videoUrl) { body.mediaUrls = [videoUrl]; body.isVideo = true; }
+      if (videoLink) { body.mediaUrls = [videoLink]; body.isVideo = true; }
       const r = await fetch('https://app.ayrshare.com/api/post', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${AYRSHARE_KEY}`, 'Content-Type': 'application/json' },
@@ -559,25 +641,35 @@ app.post('/upload', upload.single('video'), async (req, res) => {
   };
 
   const isVideo = file.mimetype.startsWith('video/');
+  const accessToken = mintToken();
   const job = {
     id:            jobId,
     createdAt:     new Date().toISOString(),
     specs,
     originalFile:  file.path,
     processedFile: null,
+    popcornFile:   null,
     isVideo,
     captions:      null,
     status:        'processing',
     postResults:   null,
-    error:         null
+    error:         null,
+    accessToken
   };
 
   const jobs = loadJobs();
   jobs.unshift(job);
   saveJobs(jobs);
 
-  // Tell client we're good — process async
-  res.json({ ok: true, jobId });
+  // Tell client we're good — process async. Include the tokenized URL so the
+  // upload page can show/share it immediately.
+  res.json({
+    ok: true,
+    jobId,
+    videoUrl:   videoUrl(job, 'main'),
+    statusUrl:  `${BASE_URL}/status/${jobId}?t=${accessToken}`,
+    galleryUrl: CLIENT_TOKEN ? `${BASE_URL}/gallery?t=${CLIENT_TOKEN}` : null
+  });
 
   // Background processing
   setImmediate(async () => {
@@ -644,28 +736,36 @@ app.post('/upload', upload.single('video'), async (req, res) => {
   });
 });
 
-// ── Admin dashboard ───────────────────────────────────────
-app.get('/admin', (req, res) => {
-  const jobs = loadJobs();
-  const statusColors = { posted: '#16a34a', ready: '#d97706', processing: '#2563eb', failed: '#dc2626' };
+// ── Shared helpers ────────────────────────────────────────
+function fileSize(p) {
+  try { return fs.statSync(p).size; } catch { return 0; }
+}
 
-  const rows = jobs.map(j => {
-    const sc = statusColors[j.status] || '#555';
-    const videoUrl = j.processedFile
-      ? `${BASE_URL}/processed/${path.basename(j.processedFile)}`
-      : null;
-    return `
-<div style="background:#111;border:1px solid #222;border-radius:14px;padding:1.5rem;margin-bottom:1rem">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem">
-    <div>
-      <div style="font-size:1.1rem;font-weight:800">${j.specs.year} ${j.specs.make} ${j.specs.model}</div>
-      <div style="color:rgba(255,255,255,0.4);font-size:0.8rem">${new Date(j.createdAt).toLocaleString()} &nbsp;·&nbsp; $${Number(j.specs.price||0).toLocaleString()} &nbsp;·&nbsp; ${Number(j.specs.mileage||0).toLocaleString()} mi</div>
-    </div>
-    <span style="background:${sc}22;color:${sc};border:1px solid ${sc}44;padding:0.2rem 0.7rem;border-radius:50px;font-size:0.75rem;font-weight:700;text-transform:uppercase">${j.status}</span>
-   </div>
-   ${videoUrl ? `<a href="${videoUrl}" download style="display:inline-block;background:#dc2626;color:#fff;padding:0.5rem 1.1rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700;margin-bottom:0.75rem">⬇ Download Video</a>
-  ` : ''}
-  ${j.captions ? `
+function diskUsage(jobs) {
+  let bytes = 0;
+  for (const j of jobs) {
+    if (j.processedFile) bytes += fileSize(j.processedFile);
+    if (j.popcornFile)   bytes += fileSize(j.popcornFile);
+    if (j.originalFile)  bytes += fileSize(j.originalFile);
+  }
+  return bytes;
+}
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+// Build the HTML for a single job card. `context` is 'admin' or 'gallery' and
+// controls which action buttons render.
+function renderJobCard(j, context) {
+  const statusColors = { posted: '#16a34a', ready: '#d97706', processing: '#2563eb', failed: '#dc2626' };
+  const sc = statusColors[j.status] || '#555';
+  const mainLink    = j.processedFile ? videoUrl(j, 'main')    : null;
+  const popcornLink = j.popcornFile   ? videoUrl(j, 'popcorn') : null;
+
+  const captionBlock = j.captions ? `
   <details><summary style="cursor:pointer;color:rgba(255,255,255,0.45);font-size:0.82rem;user-select:none">▸ View Captions</summary>
     <div style="margin-top:0.75rem;display:flex;flex-direction:column;gap:0.5rem">
       ${['facebook','instagram','tiktok'].map(p => `
@@ -674,19 +774,61 @@ app.get('/admin', (req, res) => {
         <div style="font-size:0.82rem;color:rgba(255,255,255,0.7);white-space:pre-wrap">${(j.captions[p]||'').replace(/</g,'&lt;')}</div>
       </div>`).join('')}
     </div>
-  </details>` : ''}
-  ${j.status === 'ready' ? `<div style="margin-top:0.75rem"><button onclick="post('${j.id}',this)" style="background:#111;border:1px solid #dc2626;color:#ef4444;padding:0.5rem 1rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem">Post to All Platforms</button></div>` : ''}
+  </details>` : '';
+
+  const adminActions = context === 'admin' ? `
+  <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+    ${j.status === 'ready' ? `<button onclick="post('${j.id}',this)" style="background:#111;border:1px solid #dc2626;color:#ef4444;padding:0.5rem 1rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem">Post to All Platforms</button>` : ''}
+    ${j.status === 'failed' ? `<button onclick="retry('${j.id}',this)" style="background:#111;border:1px solid #2563eb;color:#60a5fa;padding:0.5rem 1rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem">Retry</button>` : ''}
+    <button onclick="del('${j.id}',this)" style="background:#111;border:1px solid #555;color:#bbb;padding:0.5rem 1rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem">Delete</button>
+  </div>` : '';
+
+  const preview = mainLink && j.status !== 'processing' && j.isVideo !== false ? `
+  <video controls preload="metadata" style="width:100%;max-width:100%;border-radius:8px;margin-bottom:0.75rem;background:#000">
+    <source src="${mainLink}" type="video/mp4">
+  </video>` : '';
+
+  return `
+<div style="background:#111;border:1px solid #222;border-radius:14px;padding:1.5rem;margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem">
+    <div>
+      <div style="font-size:1.1rem;font-weight:800">${j.specs.year} ${j.specs.make} ${j.specs.model}</div>
+      <div style="color:rgba(255,255,255,0.4);font-size:0.8rem">${new Date(j.createdAt).toLocaleString()} &nbsp;·&nbsp; $${Number(j.specs.price||0).toLocaleString()} &nbsp;·&nbsp; ${Number(j.specs.mileage||0).toLocaleString()} mi</div>
+    </div>
+    <span style="background:${sc}22;color:${sc};border:1px solid ${sc}44;padding:0.2rem 0.7rem;border-radius:50px;font-size:0.75rem;font-weight:700;text-transform:uppercase">${j.status}</span>
+  </div>
+  ${preview}
+  ${mainLink ? `<a href="${mainLink}" download style="display:inline-block;background:#dc2626;color:#fff;padding:0.5rem 1.1rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700;margin-right:0.4rem;margin-bottom:0.75rem">⬇ Main</a>` : ''}
+  ${popcornLink ? `<a href="${popcornLink}" download style="display:inline-block;background:#222;color:#fff;padding:0.5rem 1.1rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700;margin-bottom:0.75rem">⬇ Popcorn</a>` : ''}
+  ${captionBlock}
+  ${adminActions}
 </div>`;
-  }).join('') || '<p style="color:rgba(255,255,255,0.35)">No submissions yet.</p>';
+}
+
+// ── Admin dashboard ───────────────────────────────────────
+app.get('/admin', adminAuth, (req, res) => {
+  const jobs = loadJobs();
+  const counts = jobs.reduce((a, j) => (a[j.status] = (a[j.status] || 0) + 1, a), {});
+  const usage = fmtBytes(diskUsage(jobs));
+  const rows = jobs.map(j => renderJobCard(j, 'admin')).join('') ||
+    '<p style="color:rgba(255,255,255,0.35)">No submissions yet.</p>';
 
   res.send(`<!DOCTYPE html><html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Truck Autopilot — Admin</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Plus Jakarta Sans',sans-serif;background:#080808;color:#fff;padding:2rem 1rem;max-width:760px;margin:0 auto}h1{font-size:1.6rem;font-weight:800;margin-bottom:0.2rem}h1 span{color:#ef4444}.sub{color:rgba(255,255,255,0.35);font-size:0.85rem;margin-bottom:2rem}details summary::-webkit-details-marker{display:none}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Plus Jakarta Sans',sans-serif;background:#080808;color:#fff;padding:2rem 1rem;max-width:760px;margin:0 auto}h1{font-size:1.6rem;font-weight:800;margin-bottom:0.2rem}h1 span{color:#ef4444}.sub{color:rgba(255,255,255,0.35);font-size:0.85rem;margin-bottom:2rem}.stats{display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1.5rem}.stat{background:#111;border:1px solid #222;border-radius:10px;padding:0.6rem 0.9rem;font-size:0.78rem;color:rgba(255,255,255,0.8)}.stat b{color:#fff;font-size:1rem}details summary::-webkit-details-marker{display:none}</style>
 </head><body>
 <h1><span>Truck</span> Autopilot</h1>
 <p class="sub">Admin · ${jobs.length} submission${jobs.length !== 1 ? 's' : ''} · <a href="/" style="color:#ef4444">Upload page</a></p>
+<div class="stats">
+  <div class="stat">Total: <b>${jobs.length}</b></div>
+  <div class="stat">Ready: <b>${counts.ready || 0}</b></div>
+  <div class="stat">Posted: <b>${counts.posted || 0}</b></div>
+  <div class="stat">Processing: <b>${counts.processing || 0}</b></div>
+  <div class="stat">Failed: <b>${counts.failed || 0}</b></div>
+  <div class="stat">Disk: <b>${usage}</b></div>
+</div>
 ${rows}
 <script>
 async function post(id, btn) {
@@ -696,12 +838,25 @@ async function post(id, btn) {
   const d = await r.json();
   d.ok ? location.reload() : (alert(JSON.stringify(d.error)), btn.disabled=false, btn.textContent='Post to All Platforms');
 }
+async function del(id, btn) {
+  if (!confirm('Delete this job and its video files? This cannot be undone.')) return;
+  btn.disabled=true; btn.textContent='Deleting...';
+  const r = await fetch('/admin/delete/'+id,{method:'POST'});
+  const d = await r.json();
+  d.ok ? location.reload() : (alert(JSON.stringify(d.error)), btn.disabled=false, btn.textContent='Delete');
+}
+async function retry(id, btn) {
+  btn.disabled=true; btn.textContent='Retrying...';
+  const r = await fetch('/admin/retry/'+id,{method:'POST'});
+  const d = await r.json();
+  d.ok ? location.reload() : (alert(JSON.stringify(d.error)), btn.disabled=false, btn.textContent='Retry');
+}
 </script>
 </body></html>`);
 });
 
 // Manual post trigger
-app.post('/admin/post/:id', async (req, res) => {
+app.post('/admin/post/:id', adminAuth, async (req, res) => {
   const jobs = loadJobs();
   const job  = jobs.find(j => j.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
@@ -712,6 +867,100 @@ app.post('/admin/post/:id', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Delete a job and all its files.
+app.post('/admin/delete/:id', adminAuth, (req, res) => {
+  const jobs = loadJobs();
+  const idx = jobs.findIndex(j => j.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const job = jobs[idx];
+  for (const p of [job.processedFile, job.popcornFile, job.originalFile]) {
+    if (p && fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
+  }
+  jobs.splice(idx, 1);
+  saveJobs(jobs);
+  res.json({ ok: true });
+});
+
+// Retry a failed job: re-run ffmpeg overlay + popcorn variant against the
+// original upload, then regenerate captions. Reuses the same code paths as
+// the upload handler's background block.
+app.post('/admin/retry/:id', adminAuth, async (req, res) => {
+  const jobs = loadJobs();
+  const job  = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job.originalFile || !fs.existsSync(job.originalFile)) {
+    return res.status(400).json({ error: 'Original upload is gone; cannot retry.' });
+  }
+
+  updateJob(job.id, { status: 'processing', error: null });
+  res.json({ ok: true });
+
+  setImmediate(async () => {
+    try {
+      if (job.isVideo !== false) {
+        const outPath = path.join(PROCESSED_DIR, job.id + '.mp4');
+        await processVideo(job.originalFile, outPath, job.specs);
+        updateJob(job.id, { processedFile: outPath });
+        job.processedFile = outPath;
+        try {
+          const popcornPath = path.join(PROCESSED_DIR, job.id + '_popcorn.mp4');
+          await processPopcorn(job.originalFile, popcornPath, job.specs);
+          updateJob(job.id, { popcornFile: popcornPath });
+          job.popcornFile = popcornPath;
+        } catch (ep) { console.error('Popcorn retry error:', ep.message); }
+      }
+      const captions = await generateCaptions(job.specs);
+      updateJob(job.id, { captions, status: 'ready' });
+      job.captions = captions;
+    } catch (e) {
+      console.error('Retry error:', e.message);
+      updateJob(job.id, { status: 'failed', error: e.message });
+    }
+  });
+});
+
+// ── Client-facing gallery ────────────────────────────────
+// Gated by the CLIENT_TOKEN query param. Shows all jobs with inline players
+// and copy-paste captions. The same page also works for admins (Basic auth
+// bypass) so you can preview what the client sees.
+app.get('/gallery', (req, res) => {
+  const allowed = (CLIENT_TOKEN && req.query.t === CLIENT_TOKEN) || isAdmin(req);
+  if (!allowed) return res.status(403).send('Forbidden');
+
+  const jobs = loadJobs();
+  const ready = jobs.filter(j => j.status === 'ready' || j.status === 'posted');
+  const rows = ready.map(j => renderJobCard(j, 'gallery')).join('') ||
+    '<p style="color:rgba(255,255,255,0.35)">No videos yet. Upload a truck from the <a href="/" style="color:#ef4444">home page</a>.</p>';
+
+  res.send(`<!DOCTYPE html><html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your Truck Videos</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Plus Jakarta Sans',sans-serif;background:#080808;color:#fff;padding:2rem 1rem;max-width:760px;margin:0 auto}h1{font-size:1.6rem;font-weight:800;margin-bottom:0.2rem}h1 span{color:#ef4444}.sub{color:rgba(255,255,255,0.35);font-size:0.85rem;margin-bottom:2rem}details summary::-webkit-details-marker{display:none}</style>
+</head><body>
+<h1><span>Your</span> Videos</h1>
+<p class="sub">${ready.length} video${ready.length !== 1 ? 's' : ''} · <a href="/" style="color:#ef4444">Upload another truck</a></p>
+${rows}
+</body></html>`);
+});
+
+// Lightweight per-job status poll for the upload page / client.
+app.get('/status/:id', (req, res) => {
+  const jobs = loadJobs();
+  const job  = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  const ok = (req.query.t && job.accessToken && req.query.t === job.accessToken) || isAdmin(req);
+  if (!ok) return res.status(403).json({ error: 'Forbidden' });
+  res.json({
+    id:        job.id,
+    status:    job.status,
+    error:     job.error,
+    videoUrl:  job.processedFile ? videoUrl(job, 'main')    : null,
+    popcornUrl:job.popcornFile   ? videoUrl(job, 'popcorn') : null,
+    captions:  job.captions
+  });
 });
 
 app.get('/health', (req, res) => res.json({ ok: true, jobs: loadJobs().length }));
